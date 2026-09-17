@@ -11,7 +11,7 @@ A single-page, client-side stock research tool. Enter a ticker and it pulls toge
 
 No build step — it's a single static HTML file.
 
-1. Open `index.html` in a browser (or enable **GitHub Pages** on this repo: Settings → Pages → Deploy from branch → `main` → `/root`).
+1. Open `index.html` in a browser (or enable **GitHub Pages** on this repo: Settings → Pages → Deploy from branch → `main` → `/ (root)`).
 2. Click **API keys** and paste in a free [Alpha Vantage](https://www.alphavantage.co/support/#api-key) key (required).
 3. Enter a ticker and press **Analyze**.
 
