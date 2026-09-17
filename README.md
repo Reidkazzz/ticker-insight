@@ -19,6 +19,6 @@ Keys are stored only in your own browser's local storage — nothing is sent any
 
 ## Notes & limitations
 
-- Alpha Vantage's free tier is rate-limited (~25 requests/day); each analysis uses 4 calls.
+- Alpha Vantage's free tier is rate-limited (~25 requests/day, ~1 request/second); each analysis uses 5 calls, made one at a time with a short delay between them to stay under the per-second limit.
 - Sector comparisons use fixed, approximate reference numbers — not live competitor financials — so treat the sector ranking as a rough compass, not a precise leaderboard.
 - This is an educational tool, not investment advice.

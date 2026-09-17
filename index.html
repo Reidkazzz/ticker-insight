@@ -434,23 +434,38 @@ function renderRanking(ov, income, ticker){
     '<p class="note">Sector reference values are fixed, approximate benchmarks — not live-fetched competitor financials — so treat this as a rough compass, not a precise ranking.</p>';
 }
 
+function delay(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
 async function runAnalysis(ticker){
   const avKey = els.avKey.value.trim();
   const xToken = els.xToken.value.trim();
   if(!avKey){ setBanner('error', 'Add your Alpha Vantage API key first (see API keys panel).'); return; }
 
   els.goBtn.disabled = true;
-  setBanner('', 'Fetching data for '+ticker+'…');
   try{
-    const [ov, quote, newsRaw, income, bal] = await Promise.all([
-      avFetch({function:'OVERVIEW', symbol:ticker}, avKey),
-      avFetch({function:'GLOBAL_QUOTE', symbol:ticker}, avKey),
-      avFetch({function:'NEWS_SENTIMENT', tickers:ticker, limit:'30'}, avKey),
-      avFetch({function:'INCOME_STATEMENT', symbol:ticker}, avKey),
-      avFetch({function:'BALANCE_SHEET', symbol:ticker}, avKey),
-    ]);
-
+    // Alpha Vantage's free tier only allows ~1 request/second. Firing all 5 calls at
+    // once trips its burst limit (it returns a "Note" warning instead of data), so we
+    // space them out and fail fast if the ticker itself is bad.
+    setBanner('', 'Fetching overview for '+ticker+'… (1/5)');
+    const ov = await avFetch({function:'OVERVIEW', symbol:ticker}, avKey);
     if(!ov || !ov.Symbol) throw new Error('No fundamental data returned for "'+ticker+'" — check the ticker symbol.');
+
+    await delay(1100);
+    setBanner('', 'Fetching quote for '+ticker+'… (2/5)');
+    const quote = await avFetch({function:'GLOBAL_QUOTE', symbol:ticker}, avKey);
+
+    await delay(1100);
+    setBanner('', 'Fetching news & sentiment for '+ticker+'… (3/5)');
+    const newsRaw = await avFetch({function:'NEWS_SENTIMENT', tickers:ticker, limit:'30'}, avKey);
+
+    await delay(1100);
+    setBanner('', 'Fetching income statement for '+ticker+'… (4/5)');
+    const income = await avFetch({function:'INCOME_STATEMENT', symbol:ticker}, avKey);
+
+    await delay(1100);
+    setBanner('', 'Fetching balance sheet for '+ticker+'… (5/5)');
+    const bal = await avFetch({function:'BALANCE_SHEET', symbol:ticker}, avKey);
+
     const q = quote['Global Quote'] || {};
     const price = num(q['05. price']) || 0;
     const change = num(q['09. change']) || 0;
