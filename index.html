@@ -25,7 +25,6 @@
   .topbar p{margin:4px 0 0;color:var(--ink-soft);font-size:0.85rem;max-width:50ch;}
   form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
   input[type=text],input[type=password]{font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);width:130px;}
-  input#xToken{width:220px;}
   button{font:inherit;font-weight:600;padding:9px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#221a08;cursor:pointer;}
   button.ghost{background:transparent;color:var(--ink-soft);border-color:var(--border);font-weight:500;}
   button:disabled{opacity:.55;cursor:progress;}
@@ -96,12 +95,10 @@
       <details class="keys" id="keybox">
         <summary id="keySummary">API keys</summary>
         <div class="keypanel">
-          <p>Free key at <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener">alphavantage.co</a> (required, ~25 req/day, this page uses 4 per analysis).</p>
+          <p>Free key at <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener">alphavantage.co</a> (required, ~25 req/day, this page uses 5 per analysis).</p>
           <label for="avKey">Alpha Vantage key</label>
           <input type="password" id="avKey" placeholder="required">
-          <p>Optional: an X (Twitter) API bearer token enables the live social-reputation section below. X's API requires a paid tier and typically blocks direct browser requests (CORS) — if it fails, the page falls back to a news-based buzz proxy instead.</p>
-          <label for="xToken">X API bearer token (optional)</label>
-          <input type="password" id="xToken" placeholder="optional">
+          <p>Social sentiment comes from StockTwits' free public symbol stream — no key needed. If it's unreachable, the page automatically falls back to a news-based buzz proxy instead.</p>
           <button type="button" class="ghost" id="saveKeys">Save</button>
         </div>
       </details>
@@ -127,7 +124,7 @@
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>Reputation on X</h2><span class="eyebrow">Social buzz</span></div>
+        <div class="card-head"><h2>Community sentiment</h2><span class="eyebrow">StockTwits + news buzz</span></div>
         <div id="xSection"></div>
       </div>
 
@@ -149,7 +146,7 @@
   </div>
 
   <footer>
-    Educational tool, not investment advice. Fundamentals and news come from Alpha Vantage's free tier (rate-limited, ~25 calls/day; each analysis uses 4). Sector comparisons use fixed reference benchmarks, not live competitor financials — treat them as a rough guide, not a precise ranking. The X/Twitter section needs your own API access and may be blocked by CORS in-browser.
+    Educational tool, not investment advice. Fundamentals and news come from Alpha Vantage's free tier (rate-limited, ~25 calls/day, ~1/sec; each analysis uses 5 calls made one at a time). Sector comparisons use fixed reference benchmarks, not live competitor financials — treat them as a rough guide, not a precise ranking. Community sentiment comes from StockTwits' free public stream, with an automatic news-based fallback if that's unreachable.
   </footer>
 </div>
 
@@ -163,7 +160,6 @@ function saveK(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 const els = {
   tickerInput: document.getElementById('tickerInput'),
   avKey: document.getElementById('avKey'),
-  xToken: document.getElementById('xToken'),
   saveKeys: document.getElementById('saveKeys'),
   keybox: document.getElementById('keybox'),
   keySummary: document.getElementById('keySummary'),
@@ -181,14 +177,12 @@ const els = {
 };
 
 (function initKeys(){
-  const av = loadK('ti_av_key'), xt = loadK('ti_x_token');
+  const av = loadK('ti_av_key');
   if(av) els.avKey.value = av;
-  if(xt) els.xToken.value = xt;
   els.keySummary.textContent = av ? 'API keys saved ✓' : 'API keys';
 })();
 els.saveKeys.addEventListener('click', function(){
   saveK('ti_av_key', els.avKey.value.trim());
-  saveK('ti_x_token', els.xToken.value.trim());
   els.keySummary.textContent = els.avKey.value.trim() ? 'API keys saved ✓' : 'API keys';
   els.keybox.removeAttribute('open');
 });
@@ -224,17 +218,6 @@ function sectorRef(sectorStr){
   const s = (sectorStr||'').toUpperCase();
   for(const row of SECTOR_REF){ if(row.match.some(m=>s.includes(m))) return row; }
   return SECTOR_DEFAULT;
-}
-
-/* ---------------- simple lexicon sentiment (for X fallback / scoring) ---------------- */
-const BULL_WORDS = ['bullish','buy','upgrade','beat','surge','soar','rally','outperform','record','strong','growth','moon','breakout','upside'];
-const BEAR_WORDS = ['bearish','sell','downgrade','miss','plunge','slump','crash','underperform','weak','decline','lawsuit','recall','investigation','downside'];
-function lexiconScore(text){
-  const t = (text||'').toLowerCase();
-  let s = 0;
-  BULL_WORDS.forEach(w=>{ if(t.includes(w)) s+=1; });
-  BEAR_WORDS.forEach(w=>{ if(t.includes(w)) s-=1; });
-  return s;
 }
 
 /* ---------------- Alpha Vantage ---------------- */
@@ -302,46 +285,43 @@ function renderNews(newsFeed){
   }).join('');
 }
 
-async function renderXSection(ticker, xToken, newsFeed){
-  if(!xToken){
-    // fallback proxy from news volume/sentiment
-    const bullish = newsFeed.filter(n=>sentClass(n.overall_sentiment_label)==='bullish').length;
-    const bearish = newsFeed.filter(n=>sentClass(n.overall_sentiment_label)==='bearish').length;
-    els.xSection.innerHTML =
-      '<p class="note">No X (Twitter) API token provided, so this is a proxy built from recent news volume rather than live X data. Add a bearer token in the API keys panel to try live search.</p>'+
-      '<table class="metrics"><tr><td class="k">Bullish-leaning articles</td><td class="v">'+bullish+'</td></tr>'+
-      '<tr><td class="k">Bearish-leaning articles</td><td class="v">'+bearish+'</td></tr></table>';
-    return;
-  }
+function newsBuzzFallback(ticker, newsFeed, reason){
+  const bullish = newsFeed.filter(n=>sentClass(n.overall_sentiment_label)==='bullish').length;
+  const bearish = newsFeed.filter(n=>sentClass(n.overall_sentiment_label)==='bearish').length;
+  els.xSection.innerHTML =
+    '<p class="note">'+reason+' so this is a proxy built from recent news volume instead.</p>'+
+    '<table class="metrics"><tr><td class="k">Bullish-leaning articles</td><td class="v">'+bullish+'</td></tr>'+
+    '<tr><td class="k">Bearish-leaning articles</td><td class="v">'+bearish+'</td></tr></table>';
+}
+
+async function renderSocialSection(ticker, newsFeed){
   els.xSection.innerHTML = '<div class="skel" style="width:100%;height:60px;"></div>';
   try{
-    const url = 'https://api.x.com/2/tweets/search/recent?query='+encodeURIComponent('$'+ticker+' -is:retweet lang:en')+'&max_results=50&tweet.fields=public_metrics';
-    const res = await fetch(url, {headers:{Authorization:'Bearer '+xToken}});
-    if(!res.ok) throw new Error('X API responded with '+res.status+' (your token may lack search access, or the request was blocked by CORS).');
+    // StockTwits' public symbol stream needs no key or login and is built for
+    // exactly this — retail bullish/bearish tags on a ticker.
+    const url = 'https://api.stocktwits.com/api/2/streams/symbol/'+encodeURIComponent(ticker)+'.json';
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('StockTwits responded with '+res.status);
     const json = await res.json();
-    const tweets = json.data || [];
-    if(!tweets.length){
-      els.xSection.innerHTML = '<p class="note">No recent posts returned for $'+ticker+'.</p>';
-      return;
-    }
-    let bull=0, bear=0, neu=0, engagement=0;
-    tweets.forEach(function(tw){
-      const s = lexiconScore(tw.text);
-      if(s>0) bull++; else if(s<0) bear++; else neu++;
-      const m = tw.public_metrics || {};
-      engagement += (m.like_count||0)+(m.retweet_count||0)+(m.reply_count||0);
+    const messages = json.messages || [];
+    if(!messages.length){ throw new Error('no recent StockTwits messages for this ticker'); }
+
+    let bull=0, bear=0, neu=0;
+    messages.forEach(function(m){
+      const s = m.entities && m.entities.sentiment && m.entities.sentiment.basic;
+      if(s==='Bullish') bull++; else if(s==='Bearish') bear++; else neu++;
     });
-    const total = tweets.length;
+    const total = messages.length;
     const cls = bull>bear ? 'bullish' : bear>bull ? 'bearish' : 'neutral';
     const label = bull>bear ? 'Leaning bullish' : bear>bull ? 'Leaning bearish' : 'Mixed / neutral';
     els.xSection.innerHTML =
-      '<div class="verdict-row"><span class="verdict-pill '+cls+'">'+label+'</span><span class="verdict-note">'+total+' recent posts mentioning $'+ticker+', '+engagement+' total likes/retweets/replies.</span></div>'+
-      '<table class="metrics" style="margin-top:8px;"><tr><td class="k">Bullish-leaning posts</td><td class="v">'+bull+'</td></tr>'+
-      '<tr><td class="k">Bearish-leaning posts</td><td class="v">'+bear+'</td></tr>'+
-      '<tr><td class="k">Neutral posts</td><td class="v">'+neu+'</td></tr></table>'+
-      '<p class="note">Sentiment here is a simple keyword heuristic, not a trained model — treat it as directional only.</p>';
+      '<div class="verdict-row"><span class="verdict-pill '+cls+'">'+label+'</span><span class="verdict-note">'+total+' recent StockTwits posts mentioning $'+ticker+'.</span></div>'+
+      '<table class="metrics" style="margin-top:8px;"><tr><td class="k">Bullish-tagged posts</td><td class="v">'+bull+'</td></tr>'+
+      '<tr><td class="k">Bearish-tagged posts</td><td class="v">'+bear+'</td></tr>'+
+      '<tr><td class="k">Untagged posts</td><td class="v">'+neu+'</td></tr></table>'+
+      '<p class="note">From StockTwits\' free public symbol stream — no account needed. Tags are self-reported by posters, not a computed model.</p>';
   }catch(err){
-    els.xSection.innerHTML = '<p class="note" style="color:var(--bear);">Could not reach the X API directly from the browser (' + err.message + '). This is expected — X\'s API generally requires a server-side request. Falling back isn\'t automatic here; remove the token to see the news-based proxy instead.</p>';
+    newsBuzzFallback(ticker, newsFeed, 'Could not reach StockTwits directly from the browser ('+err.message+'),');
   }
 }
 
@@ -438,7 +418,6 @@ function delay(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 
 async function runAnalysis(ticker){
   const avKey = els.avKey.value.trim();
-  const xToken = els.xToken.value.trim();
   if(!avKey){ setBanner('error', 'Add your Alpha Vantage API key first (see API keys panel).'); return; }
 
   els.goBtn.disabled = true;
@@ -479,7 +458,7 @@ async function runAnalysis(ticker){
     const newsFeed = newsRaw.feed || [];
     renderSentiment(newsFeed, ticker);
     renderNews(newsFeed);
-    await renderXSection(ticker, xToken, newsFeed);
+    await renderSocialSection(ticker, newsFeed);
     renderFundamentals(ov, income, (bal.quarterlyReports&&bal.quarterlyReports[0]) || (bal.annualReports&&bal.annualReports[0]) || null);
     renderRanking(ov, income, ticker);
 
