@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Analyzer · Ticker Insight</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brandline">
+      <h1><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 17L9 11L13 15L21 6" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 6H15M21 6V12" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Ticker Insight</h1>
+      <p>News &amp; sentiment, social buzz, fundamentals, and sector standing for any public ticker — powered by your own free Alpha Vantage key.</p>
+      <nav class="pagenav">
+        <a href="index.html">Home</a>
+        <a href="overview.html">Market Overview</a>
+        <a href="analyzer.html" class="active">Stock Analyzer</a>
+      </nav>
+    </div>
+    <form id="searchForm" autocomplete="off">
+      <input type="text" id="tickerInput" placeholder="AAPL" maxlength="8" value="AAPL">
+      <details class="keys" id="keybox">
+        <summary id="keySummary">API keys</summary>
+        <div class="keypanel">
+          <p>Free key at <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener">alphavantage.co</a> (required, ~25 req/day, this page uses 5 per analysis).</p>
+          <label for="avKey">Alpha Vantage key</label>
+          <input type="password" id="avKey" placeholder="required">
+          <p>Social sentiment comes from StockTwits' free public symbol stream — no key needed. If it's unreachable, the page automatically falls back to a news-based buzz proxy instead.</p>
+          <button type="button" class="ghost" id="saveKeys">Save</button>
+        </div>
+      </details>
+      <button type="submit" id="goBtn">Analyze</button>
+    </form>
+  </div>
+
+  <div id="banner" class="banner example">Enter your Alpha Vantage key above, then press Analyze.</div>
+
+  <div class="overview" id="overview" style="display:none;"></div>
+
+  <div class="grid">
+    <div class="col" style="display:flex;flex-direction:column;gap:18px;">
+
+      <div class="card">
+        <div class="card-head"><h2>News &amp; sentiment read</h2><span class="eyebrow">Bullish / bearish</span></div>
+        <div id="sentimentVerdict"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Latest news</h2><span class="eyebrow" id="newsCount">—</span></div>
+        <div id="newsList"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Community sentiment</h2><span class="eyebrow">StockTwits + news buzz</span></div>
+        <div id="xSection"></div>
+      </div>
+
+    </div>
+
+    <div class="col" style="display:flex;flex-direction:column;gap:18px;">
+
+      <div class="card">
+        <div class="card-head"><h2>Fundamental analysis</h2><span class="eyebrow">Income statement &amp; balance sheet</span></div>
+        <table class="metrics" id="fundTable"></table>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Sector &amp; competitor standing</h2><span class="eyebrow" id="sectorName">—</span></div>
+        <div id="rankSection"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>
+    Educational tool, not investment advice. Fundamentals and news come from Alpha Vantage's free tier (rate-limited, ~25 calls/day, ~1/sec; each analysis uses 5 calls made one at a time). Sector comparisons use fixed reference benchmarks, not live competitor financials — treat them as a rough guide, not a precise ranking. Community sentiment comes from StockTwits' free public stream, with an automatic news-based fallback if that's unreachable. Looking for the upcoming macro calendar instead? See the <a href="overview.html">Market Overview</a> page.
+  </footer>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(function(){
+"use strict";
+
+const els = {
+  tickerInput: document.getElementById('tickerInput'),
+  avKey: document.getElementById('avKey'),
+  saveKeys: document.getElementById('saveKeys'),
+  keybox: document.getElementById('keybox'),
+  keySummary: document.getElementById('keySummary'),
+  form: document.getElementById('searchForm'),
+  goBtn: document.getElementById('goBtn'),
+  banner: document.getElementById('banner'),
+  overview: document.getElementById('overview'),
+  sentimentVerdict: document.getElementById('sentimentVerdict'),
+  newsList: document.getElementById('newsList'),
+  newsCount: document.getElementById('newsCount'),
+  xSection: document.getElementById('xSection'),
+  fundTable: document.getElementById('fundTable'),
+  sectorName: document.getElementById('sectorName'),
+  rankSection: document.getElementById('rankSection'),
+};
+
+(function initKeys(){
+  const av = loadK('ti_av_key');
+  if(av) els.avKey.value = av;
+  els.keySummary.textContent = av ? 'API keys saved ✓' : 'API keys';
+})();
+els.saveKeys.addEventListener('click', function(){
+  saveK('ti_av_key', els.avKey.value.trim());
+  els.keySummary.textContent = els.avKey.value.trim() ? 'API keys saved ✓' : 'API keys';
+  els.keybox.removeAttribute('open');
+});
+
+function setBanner(kind,msg){ els.banner.className = 'banner'+(kind?' '+kind:''); els.banner.textContent = msg; }
+
+/* ---------------- sector reference benchmarks (static, approximate) ---------------- */
+const SECTOR_REF = [
+  {match:['TECHNOLOGY'], pe:28, margin:0.18, growth:0.10, peers:['AAPL','MSFT','GOOGL','NVDA','META']},
+  {match:['HEALTH'], pe:22, margin:0.12, growth:0.08, peers:['JNJ','UNH','PFE','ABBV','LLY']},
+  {match:['FINANC'], pe:14, margin:0.22, growth:0.06, peers:['JPM','BAC','WFC','GS','MS']},
+  {match:['CONSUMER CYCLICAL','CONSUMER DISCRETIONARY'], pe:20, margin:0.08, growth:0.09, peers:['AMZN','TSLA','HD','MCD','NKE']},
+  {match:['CONSUMER DEFENSIVE','CONSUMER STAPLES'], pe:19, margin:0.09, growth:0.04, peers:['PG','KO','PEP','WMT','COST']},
+  {match:['ENERGY'], pe:11, margin:0.10, growth:0.05, peers:['XOM','CVX','COP','SLB','EOG']},
+  {match:['INDUSTRIAL'], pe:19, margin:0.09, growth:0.06, peers:['CAT','HON','UPS','GE','BA']},
+  {match:['UTILIT'], pe:17, margin:0.11, growth:0.03, peers:['NEE','DUK','SO','AEP','EXC']},
+  {match:['REAL ESTATE'], pe:35, margin:0.25, growth:0.04, peers:['PLD','AMT','EQIX','SPG','O']},
+  {match:['MATERIAL'], pe:16, margin:0.10, growth:0.04, peers:['LIN','SHW','FCX','NEM','DOW']},
+  {match:['COMMUNICATION'], pe:19, margin:0.14, growth:0.06, peers:['GOOGL','META','NFLX','DIS','TMUS']},
+];
+const SECTOR_DEFAULT = {pe:20, margin:0.12, growth:0.07, peers:[]};
+function sectorRef(sectorStr){
+  const s = (sectorStr||'').toUpperCase();
+  for(const row of SECTOR_REF){ if(row.match.some(m=>s.includes(m))) return row; }
+  return SECTOR_DEFAULT;
+}
+
+function renderOverview(d){
+  els.overview.style.display = 'flex';
+  const cls = d.change>=0 ? 'up' : 'down';
+  const arrow = d.change>=0 ? '▲' : '▼';
+  els.overview.innerHTML =
+    '<div class="ov-id"><div class="tick">'+d.ticker+' · '+(d.exchange||'—')+'</div><h2>'+d.name+'</h2><div class="sub">'+(d.sector||'')+(d.industry?' · '+d.industry:'')+'</div></div>'+
+    '<div class="ov-price"><span class="px">$'+d.price.toFixed(2)+'</span><span class="chg '+cls+'">'+arrow+' '+Math.abs(d.change).toFixed(2)+' ('+Math.abs(d.changePct).toFixed(2)+'%)</span></div>';
+}
+
+function renderSentiment(newsFeed, ticker){
+  if(!newsFeed.length){
+    els.sentimentVerdict.innerHTML = '<div class="verdict-note">No recent news found to gauge sentiment from.</div>';
+    return;
+  }
+  let scoreSum = 0, n = 0;
+  newsFeed.forEach(item=>{
+    const tk = (item.ticker_sentiment||[]).find(t=>t.ticker===ticker);
+    const s = tk ? num(tk.ticker_sentiment_score) : num(item.overall_sentiment_score);
+    if(s!==null){ scoreSum += s; n++; }
+  });
+  const avgScore = n ? scoreSum/n : 0;
+  let label, cls;
+  if(avgScore >= 0.15){ label = 'Bullish'; cls = 'bullish'; }
+  else if(avgScore <= -0.15){ label = 'Bearish'; cls = 'bearish'; }
+  else { label = 'Neutral / mixed'; cls = 'neutral'; }
+  els.sentimentVerdict.innerHTML =
+    '<div class="verdict-row"><span class="verdict-pill '+cls+'">'+label+'</span><span class="verdict-note">Average sentiment score '+avgScore.toFixed(2)+' across '+n+' recent articles (Alpha Vantage NEWS_SENTIMENT).</span></div>';
+}
+
+function renderNews(newsFeed){
+  els.newsCount.textContent = newsFeed.length + ' articles';
+  if(!newsFeed.length){ els.newsList.innerHTML = '<p class="verdict-note">No recent news found for this ticker.</p>'; return; }
+  els.newsList.innerHTML = newsFeed.slice(0,12).map(function(n){
+    const cls = sentClass(n.overall_sentiment_label);
+    let when = '';
+    if(n.time_published && n.time_published.length>=8){
+      const t = n.time_published;
+      when = t.slice(4,6)+'/'+t.slice(6,8)+'/'+t.slice(0,4);
+    }
+    return '<div class="news-item"><div class="news-top"><a href="'+n.url+'" target="_blank" rel="noopener">'+n.title+'</a><span class="tag '+cls+'">'+(n.overall_sentiment_label||'—')+'</span></div>'+
+      '<div class="meta">'+n.source+' · '+when+'</div></div>';
+  }).join('');
+}
+
+function newsBuzzFallback(ticker, newsFeed, reason){
+  const bullish = newsFeed.filter(n=>sentClass(n.overall_sentiment_label)==='bullish').length;
+  const bearish = newsFeed.filter(n=>sentClass(n.overall_sentiment_label)==='bearish').length;
+  els.xSection.innerHTML =
+    '<p class="note">'+reason+' so this is a proxy built from recent news volume instead.</p>'+
+    '<table class="metrics"><tr><td class="k">Bullish-leaning articles</td><td class="v">'+bullish+'</td></tr>'+
+    '<tr><td class="k">Bearish-leaning articles</td><td class="v">'+bearish+'</td></tr></table>';
+}
+
+async function renderSocialSection(ticker, newsFeed){
+  els.xSection.innerHTML = '<div class="skel" style="width:100%;height:60px;"></div>';
+  try{
+    // StockTwits' public symbol stream needs no key or login and is built for
+    // exactly this — retail bullish/bearish tags on a ticker.
+    const url = 'https://api.stocktwits.com/api/2/streams/symbol/'+encodeURIComponent(ticker)+'.json';
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('StockTwits responded with '+res.status);
+    const json = await res.json();
+    const messages = json.messages || [];
+    if(!messages.length){ throw new Error('no recent StockTwits messages for this ticker'); }
+
+    let bull=0, bear=0, neu=0;
+    messages.forEach(function(m){
+      const s = m.entities && m.entities.sentiment && m.entities.sentiment.basic;
+      if(s==='Bullish') bull++; else if(s==='Bearish') bear++; else neu++;
+    });
+    const total = messages.length;
+    const cls = bull>bear ? 'bullish' : bear>bull ? 'bearish' : 'neutral';
+    const label = bull>bear ? 'Leaning bullish' : bear>bull ? 'Leaning bearish' : 'Mixed / neutral';
+    els.xSection.innerHTML =
+      '<div class="verdict-row"><span class="verdict-pill '+cls+'">'+label+'</span><span class="verdict-note">'+total+' recent StockTwits posts mentioning $'+ticker+'.</span></div>'+
+      '<table class="metrics" style="margin-top:8px;"><tr><td class="k">Bullish-tagged posts</td><td class="v">'+bull+'</td></tr>'+
+      '<tr><td class="k">Bearish-tagged posts</td><td class="v">'+bear+'</td></tr>'+
+      '<tr><td class="k">Untagged posts</td><td class="v">'+neu+'</td></tr></table>'+
+      '<p class="note">From StockTwits\' free public symbol stream — no account needed. Tags are self-reported by posters, not a computed model.</p>';
+  }catch(err){
+    newsBuzzFallback(ticker, newsFeed, 'Could not reach StockTwits directly from the browser ('+err.message+'),');
+  }
+}
+
+function metricRow(k,v){ return '<tr><td class="k">'+k+'</td><td class="v">'+v+'</td></tr>'; }
+
+function renderFundamentals(ov, income, bal){
+  const rows = [];
+  const pe = num(ov.PERatio), peg = num(ov.PEGRatio);
+  rows.push(metricRow('P/E ratio', pe!==null?pe.toFixed(1):'—'));
+  rows.push(metricRow('PEG ratio', peg!==null?peg.toFixed(2):'—'));
+  rows.push(metricRow('Profit margin', pct(num(ov.ProfitMargin))));
+  rows.push(metricRow('Operating margin', pct(num(ov.OperatingMarginTTM))));
+  rows.push(metricRow('Return on equity', pct(num(ov.ReturnOnEquityTTM))));
+
+  // income statement YoY (most recent two annual reports)
+  const ar = (income && income.annualReports) || [];
+  if(ar.length >= 2){
+    const rev0 = num(ar[0].totalRevenue), rev1 = num(ar[1].totalRevenue);
+    const ni0 = num(ar[0].netIncome), ni1 = num(ar[1].netIncome);
+    if(rev0!==null && rev1) rows.push(metricRow('Revenue YoY (annual)', pct((rev0-rev1)/Math.abs(rev1))));
+    if(ni0!==null && ni1) rows.push(metricRow('Net income YoY (annual)', pct((ni0-ni1)/Math.abs(ni1))));
+    rows.push(metricRow('Latest annual revenue', money(rev0)));
+    rows.push(metricRow('Latest annual net income', money(ni0)));
+  }
+  rows.push(metricRow('Market cap', money(num(ov.MarketCapitalization))));
+  rows.push(metricRow('Analyst target', num(ov.AnalystTargetPrice)!==null ? '$'+num(ov.AnalystTargetPrice).toFixed(2) : '—'));
+
+  if(bal){
+    const liab = num(bal.totalLiabilities), eq = num(bal.totalShareholderEquity);
+    const ca = num(bal.totalCurrentAssets), cl = num(bal.totalCurrentLiabilities);
+    rows.push(metricRow('Debt / equity', (liab!==null&&eq)?(liab/eq).toFixed(2):'—'));
+    rows.push(metricRow('Current ratio', (ca!==null&&cl)?(ca/cl).toFixed(2):'—'));
+  }
+  els.fundTable.innerHTML = rows.join('');
+}
+
+function verdictTag(companyVal, sectorVal, higherIsBetter){
+  if(companyVal===null || sectorVal===null || sectorVal===0) return {cls:'neutral', label:'n/a'};
+  const ratio = companyVal/sectorVal;
+  const better = higherIsBetter ? ratio>1.1 : ratio<0.9;
+  const worse = higherIsBetter ? ratio<0.9 : ratio>1.1;
+  if(better) return {cls:'bullish', label:'Above sector'};
+  if(worse) return {cls:'bearish', label:'Below sector'};
+  return {cls:'neutral', label:'In line'};
+}
+
+function renderRanking(ov, income, ticker){
+  const sector = ov.Sector || ov.Industry || '';
+  els.sectorName.textContent = sector || 'Unclassified';
+  const ref = sectorRef(sector);
+
+  const pe = num(ov.PERatio);
+  const margin = num(ov.ProfitMargin);
+  const ar = (income && income.annualReports) || [];
+  let growth = null;
+  if(ar.length>=2){
+    const rev0=num(ar[0].totalRevenue), rev1=num(ar[1].totalRevenue);
+    if(rev0!==null && rev1) growth = (rev0-rev1)/Math.abs(rev1);
+  }
+
+  const peV = verdictTag(pe, ref.pe, false); // lower P/E = cheaper = "better" here
+  const mV = verdictTag(margin, ref.margin, true);
+  const gV = verdictTag(growth, ref.growth, true);
+
+  const tally = [peV,mV,gV].filter(v=>v.label!=='n/a');
+  const bullCount = tally.filter(v=>v.cls==='bullish').length;
+  const bearCount = tally.filter(v=>v.cls==='bearish').length;
+  let tier, tierCls;
+  if(bullCount>=2){ tier='Top of sector'; tierCls='bullish'; }
+  else if(bearCount>=2){ tier='Below sector average'; tierCls='bearish'; }
+  else { tier='Around sector average'; tierCls='neutral'; }
+
+  const rows = [
+    ['P/E ratio', pe!==null?pe.toFixed(1):'—', ref.pe.toFixed(1), peV],
+    ['Profit margin', pct(margin), (ref.margin*100).toFixed(0)+'%', mV],
+    ['Revenue growth (YoY)', pct(growth), (ref.growth*100).toFixed(0)+'%', gV],
+  ];
+
+  const tableHtml = '<table class="rank"><tr><th>Metric</th><th>'+ticker+'</th><th>Sector ref.</th><th></th></tr>'+
+    rows.map(r=>'<tr><td>'+r[0]+'</td><td class="num">'+r[1]+'</td><td class="num">'+r[2]+'</td><td><span class="tag '+r[3].cls+'">'+r[3].label+'</span></td></tr>').join('')+
+    '</table>';
+
+  const peersHtml = ref.peers.length ? '<div class="peers">'+ref.peers.map(p=>'<span class="peer-chip">'+p+'</span>').join('')+'</div>' : '<p class="note">No reference peer list for this sector.</p>';
+
+  els.rankSection.innerHTML =
+    '<div class="verdict-row"><span class="tier-badge" style="background:var(--'+tierCls+'-soft);color:var(--'+tierCls+');">'+tier+'</span></div>'+
+    tableHtml+
+    '<p class="eyebrow" style="margin-top:6px;">Notable names in this sector</p>'+
+    peersHtml+
+    '<p class="note">Sector reference values are fixed, approximate benchmarks — not live-fetched competitor financials — so treat this as a rough compass, not a precise ranking.</p>';
+}
+
+async function runAnalysis(ticker){
+  const avKey = els.avKey.value.trim();
+  if(!avKey){ setBanner('error', 'Add your Alpha Vantage API key first (see API keys panel).'); return; }
+
+  els.goBtn.disabled = true;
+  try{
+    // Alpha Vantage's free tier only allows ~1 request/second. Firing all 5 calls at
+    // once trips its burst limit (it returns a "Note" warning instead of data), so we
+    // space them out and fail fast if the ticker itself is bad.
+    setBanner('', 'Fetching overview for '+ticker+'… (1/5)');
+    const ov = await avFetch({function:'OVERVIEW', symbol:ticker}, avKey);
+    if(!ov || !ov.Symbol) throw new Error('No fundamental data returned for "'+ticker+'" — check the ticker symbol.');
+
+    await delay(1100);
+    setBanner('', 'Fetching quote for '+ticker+'… (2/5)');
+    const quote = await avFetch({function:'GLOBAL_QUOTE', symbol:ticker}, avKey);
+
+    await delay(1100);
+    setBanner('', 'Fetching news & sentiment for '+ticker+'… (3/5)');
+    const newsRaw = await avFetch({function:'NEWS_SENTIMENT', tickers:ticker, limit:'30'}, avKey);
+
+    await delay(1100);
+    setBanner('', 'Fetching income statement for '+ticker+'… (4/5)');
+    const income = await avFetch({function:'INCOME_STATEMENT', symbol:ticker}, avKey);
+
+    await delay(1100);
+    setBanner('', 'Fetching balance sheet for '+ticker+'… (5/5)');
+    const bal = await avFetch({function:'BALANCE_SHEET', symbol:ticker}, avKey);
+
+    const q = quote['Global Quote'] || {};
+    const price = num(q['05. price']) || 0;
+    const change = num(q['09. change']) || 0;
+    const changePct = num((q['10. change percent']||'0').replace('%','')) || 0;
+
+    renderOverview({
+      ticker: ov.Symbol, name: ov.Name, exchange: ov.Exchange, sector: ov.Sector, industry: ov.Industry,
+      price, change, changePct
+    });
+
+    const newsFeed = newsRaw.feed || [];
+    renderSentiment(newsFeed, ticker);
+    renderNews(newsFeed);
+    await renderSocialSection(ticker, newsFeed);
+    renderFundamentals(ov, income, (bal.quarterlyReports&&bal.quarterlyReports[0]) || (bal.annualReports&&bal.annualReports[0]) || null);
+    renderRanking(ov, income, ticker);
+
+    setBanner('', 'Loaded live data for '+ticker+'.');
+  }catch(err){
+    setBanner('error', err.message);
+  }finally{
+    els.goBtn.disabled = false;
+  }
+}
+
+els.form.addEventListener('submit', function(e){
+  e.preventDefault();
+  const t = els.tickerInput.value.trim().toUpperCase();
+  if(t) runAnalysis(t);
+});
+
+})();
+</script>
+</body>
+</html>
