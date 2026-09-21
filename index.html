@@ -10,11 +10,7 @@
     --accent:#b8842e; --accent-soft:#f3e6c9; --bull:#2f7a56; --bull-soft:#dcefe4; --bear:#a8402c; --bear-soft:#f6e0da;
     --neutral:#6b6656; --neutral-soft:#eae6da;
   }
-  @media (prefers-color-scheme: dark){
-    :root{ --bg:#111312; --card:#191c1a; --border:#2a2e2b; --ink:#eef0ec; --ink-soft:#a9a89c; --ink-faint:#7a7a6f;
-      --accent:#e0ac4f; --accent-soft:#3a2f18; --bull:#52c090; --bull-soft:#173226; --bear:#e2705a; --bear-soft:#33201c;
-      --neutral:#9a9789; --neutral-soft:#23241f; }
-  }
+  /* Always light mode — dark-mode auto-switching removed by request. */
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px 16px 60px;}
   .wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:18px;}
@@ -77,6 +73,18 @@
   .peers{display:flex;flex-wrap:wrap;gap:6px;}
   .peer-chip{font-family:ui-monospace,monospace;font-size:.75rem;background:var(--neutral-soft);color:var(--ink-soft);padding:3px 9px;border-radius:999px;}
   .note{font-size:.76rem;color:var(--ink-faint);line-height:1.5;}
+  .cal-sub{display:flex;flex-direction:column;gap:10px;}
+  .cal-row{display:flex;gap:12px;align-items:flex-start;padding-block:9px;border-bottom:1px solid var(--border);}
+  .cal-row:last-child{border-bottom:none;}
+  .cal-date{flex:0 0 auto;width:56px;text-align:center;background:var(--neutral-soft);border-radius:8px;padding:6px 2px;}
+  .cal-date .mon{font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-faint);font-weight:700;}
+  .cal-date .day{font-family:ui-monospace,monospace;font-size:1rem;font-weight:700;color:var(--ink);}
+  .cal-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .cal-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+  .cal-title{font-weight:600;font-size:.85rem;}
+  .cal-when{font-size:.7rem;font-family:ui-monospace,monospace;color:var(--accent);white-space:nowrap;margin-left:auto;}
+  .cal-desc{font-size:.78rem;color:var(--ink-soft);}
+  .cal-cat{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 7px;border-radius:5px;background:var(--accent-soft);color:var(--accent);white-space:nowrap;}
   .skel{background:linear-gradient(90deg,var(--neutral-soft) 25%,var(--border) 37%,var(--neutral-soft) 63%);background-size:400% 100%;animation:sh 1.3s ease infinite;border-radius:8px;height:14px;}
   @keyframes sh{0%{background-position:100% 0}100%{background-position:0 0}}
   footer{font-size:.74rem;color:var(--ink-faint);text-align:center;padding-top:10px;line-height:1.6;}
@@ -107,6 +115,24 @@
   </div>
 
   <div id="banner" class="banner example">Enter your Alpha Vantage key above, then press Analyze.</div>
+
+  <div class="card" id="marketEventsCard">
+    <div class="card-head"><h2>Market-moving events</h2><span class="eyebrow">Macro calendar &amp; news</span></div>
+
+    <div class="cal-sub">
+      <p class="eyebrow">Upcoming U.S. calendar</p>
+      <div id="calList"></div>
+      <p class="note">Fed rate decisions, inflation (CPI), jobs reports, and GDP/PCE are the scheduled releases most likely to move the broad market. Dates come from the official Federal Reserve, BLS, and BEA schedules; FOMC dates beyond the next meeting are tentative until confirmed at the prior one.</p>
+    </div>
+
+    <div class="cal-sub" style="border-top:1px solid var(--border);padding-top:14px;">
+      <div class="card-head" style="margin-bottom:0;">
+        <p class="eyebrow" style="margin:0;">Market-moving news right now</p>
+        <button type="button" class="ghost" id="loadMarketNews">Load latest</button>
+      </div>
+      <div id="marketNewsList"><p class="note">Pulls general market/macro headlines (not tied to one ticker) from Alpha Vantage. Uses your saved key and counts as 1 of your ~25 daily calls.</p></div>
+    </div>
+  </div>
 
   <div class="overview" id="overview" style="display:none;"></div>
 
@@ -146,7 +172,7 @@
   </div>
 
   <footer>
-    Educational tool, not investment advice. Fundamentals and news come from Alpha Vantage's free tier (rate-limited, ~25 calls/day, ~1/sec; each analysis uses 5 calls made one at a time). Sector comparisons use fixed reference benchmarks, not live competitor financials — treat them as a rough guide, not a precise ranking. Community sentiment comes from StockTwits' free public stream, with an automatic news-based fallback if that's unreachable.
+    Educational tool, not investment advice. Fundamentals and news come from Alpha Vantage's free tier (rate-limited, ~25 calls/day, ~1/sec; each analysis uses 5 calls made one at a time). Sector comparisons use fixed reference benchmarks, not live competitor financials — treat them as a rough guide, not a precise ranking. Community sentiment comes from StockTwits' free public stream, with an automatic news-based fallback if that's unreachable. The upcoming-events calendar is a maintained list of official Fed/BLS/BEA release dates (not a live feed); market news is fetched live from Alpha Vantage on demand.
   </footer>
 </div>
 
@@ -174,6 +200,9 @@ const els = {
   fundTable: document.getElementById('fundTable'),
   sectorName: document.getElementById('sectorName'),
   rankSection: document.getElementById('rankSection'),
+  calList: document.getElementById('calList'),
+  marketNewsList: document.getElementById('marketNewsList'),
+  loadMarketNews: document.getElementById('loadMarketNews'),
 };
 
 (function initKeys(){
@@ -218,6 +247,82 @@ function sectorRef(sectorStr){
   const s = (sectorStr||'').toUpperCase();
   for(const row of SECTOR_REF){ if(row.match.some(m=>s.includes(m))) return row; }
   return SECTOR_DEFAULT;
+}
+
+/* ---------------- upcoming U.S. macro calendar (static, verified against source calendars) ----------------
+   Sourced from federalreserve.gov/monetarypolicy/fomccalendars.htm, bls.gov/schedule (CPI & Employment
+   Situation release schedules), and bea.gov/news/schedule, checked as of Sep 21, 2026. FOMC meetings beyond
+   the next one are tentative until confirmed at the prior meeting, per the Fed's own calendar page. This
+   list runs through Jan 2027 — extend it with the next year's published schedules before it runs dry. */
+const MACRO_EVENTS = [
+  {start:'2026-09-30', title:'GDP (3rd estimate, Q2 2026) + PCE inflation (Aug 2026)', cat:'Growth', desc:"Confirms the pace of economic growth alongside the Fed's preferred inflation gauge."},
+  {start:'2026-10-02', title:'Jobs report — September 2026', cat:'Jobs', desc:'Payrolls, unemployment rate, and wage growth; shapes Fed rate-cut expectations.'},
+  {start:'2026-10-14', title:'CPI inflation report — September 2026', cat:'Inflation', desc:"Headline &amp; core inflation — surprises here are among the market's biggest single-day movers."},
+  {start:'2026-10-27', end:'2026-10-28', title:'FOMC meeting — rate decision &amp; press conference', cat:'Fed', desc:'Sets the federal funds rate, the single biggest lever for stocks, bonds, and the dollar.'},
+  {start:'2026-10-29', title:'GDP (advance estimate, Q3 2026) + PCE inflation (Sep 2026)', cat:'Growth', desc:"First read on Q3 growth alongside the Fed's preferred inflation gauge."},
+  {start:'2026-11-06', title:'Jobs report — October 2026', cat:'Jobs', desc:'Payrolls, unemployment rate, and wage growth; shapes Fed rate-cut expectations.'},
+  {start:'2026-11-10', title:'CPI inflation report — October 2026', cat:'Inflation', desc:"Headline &amp; core inflation — surprises here are among the market's biggest single-day movers."},
+  {start:'2026-11-25', title:'GDP (2nd estimate, Q3 2026) + PCE inflation (Oct 2026)', cat:'Growth', desc:"Revised Q3 growth figure alongside the Fed's preferred inflation gauge."},
+  {start:'2026-12-04', title:'Jobs report — November 2026', cat:'Jobs', desc:'Payrolls, unemployment rate, and wage growth; shapes Fed rate-cut expectations.'},
+  {start:'2026-12-08', end:'2026-12-09', title:'FOMC meeting — rate decision, press conference &amp; updated dot plot', cat:'Fed', desc:'Quarterly projections show where officials see rates heading next year.'},
+  {start:'2026-12-10', title:'CPI inflation report — November 2026', cat:'Inflation', desc:"Headline &amp; core inflation — surprises here are among the market's biggest single-day movers."},
+  {start:'2026-12-23', title:'GDP (3rd estimate, Q3 2026) + PCE inflation (Nov 2026)', cat:'Growth', desc:"Confirms Q3 growth alongside the Fed's preferred inflation gauge."},
+  {start:'2027-01-26', end:'2027-01-27', title:'FOMC meeting — rate decision &amp; press conference', cat:'Fed', desc:'First Fed meeting of 2027; sets the federal funds rate.'},
+];
+
+function daysUntil(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((d - today) / 86400000);
+}
+function fmtWhen(diff){
+  if(diff < 0) return '';
+  if(diff === 0) return 'Today';
+  if(diff === 1) return 'Tomorrow';
+  if(diff < 7) return 'In '+diff+' days';
+  const wk = Math.round(diff/7);
+  return 'In '+wk+' wk'+(wk===1?'':'s');
+}
+function fmtDateBadge(startStr, endStr){
+  const d = new Date(startStr+'T00:00:00');
+  const mon = d.toLocaleDateString('en-US',{month:'short'});
+  if(endStr){
+    const e = new Date(endStr+'T00:00:00');
+    return {mon: mon, day: d.getDate()+'–'+e.getDate()};
+  }
+  return {mon: mon, day: String(d.getDate())};
+}
+function renderCalendar(){
+  const upcoming = MACRO_EVENTS.filter(function(ev){ return daysUntil(ev.end || ev.start) >= 0; }).slice(0,8);
+  if(!upcoming.length){
+    els.calList.innerHTML = '<p class="note">This calendar has run past its last loaded date — it needs a refresh with the next batch of published Fed/BLS/BEA dates.</p>';
+    return;
+  }
+  els.calList.innerHTML = upcoming.map(function(ev){
+    const badge = fmtDateBadge(ev.start, ev.end);
+    return '<div class="cal-row">'+
+      '<div class="cal-date"><div class="mon">'+badge.mon+'</div><div class="day">'+badge.day+'</div></div>'+
+      '<div class="cal-body">'+
+        '<div class="cal-top"><span class="cal-title">'+ev.title+'</span><span class="cal-cat">'+ev.cat+'</span><span class="cal-when">'+fmtWhen(daysUntil(ev.start))+'</span></div>'+
+        '<div class="cal-desc">'+ev.desc+'</div>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function renderMarketNews(feed){
+  if(!feed.length){ els.marketNewsList.innerHTML = '<p class="note">No macro/market headlines came back — try again shortly.</p>'; return; }
+  els.marketNewsList.innerHTML = feed.slice(0,8).map(function(n){
+    const cls = sentClass(n.overall_sentiment_label);
+    let when = '';
+    if(n.time_published && n.time_published.length>=8){
+      const t = n.time_published;
+      when = t.slice(4,6)+'/'+t.slice(6,8)+'/'+t.slice(0,4);
+    }
+    return '<div class="news-item"><div class="news-top"><a href="'+n.url+'" target="_blank" rel="noopener">'+n.title+'</a><span class="tag '+cls+'">'+(n.overall_sentiment_label||'—')+'</span></div>'+
+      '<div class="meta">'+n.source+' · '+when+'</div></div>';
+  }).join('');
 }
 
 /* ---------------- Alpha Vantage ---------------- */
@@ -475,6 +580,23 @@ els.form.addEventListener('submit', function(e){
   const t = els.tickerInput.value.trim().toUpperCase();
   if(t) runAnalysis(t);
 });
+
+els.loadMarketNews.addEventListener('click', async function(){
+  const avKey = els.avKey.value.trim();
+  if(!avKey){ els.marketNewsList.innerHTML = '<p class="note">Add your Alpha Vantage key first (see API keys panel above).</p>'; return; }
+  els.loadMarketNews.disabled = true;
+  els.marketNewsList.innerHTML = '<div class="skel" style="width:100%;height:60px;"></div>';
+  try{
+    const json = await avFetch({function:'NEWS_SENTIMENT', topics:'financial_markets,economy_macro,economy_monetary,economy_fiscal', limit:'10'}, avKey);
+    renderMarketNews(json.feed || []);
+  }catch(err){
+    els.marketNewsList.innerHTML = '<p class="note">'+err.message+'</p>';
+  }finally{
+    els.loadMarketNews.disabled = false;
+  }
+});
+
+renderCalendar();
 
 })();
 </script>
