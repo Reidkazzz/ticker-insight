@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ETF Analyzer · Ticker Insight</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brandline">
+      <h1><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 17L9 11L13 15L21 6" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 6H15M21 6V12" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Ticker Insight</h1>
+      <p>Expense ratio (with a high/normal/low read), sector exposure, top holdings, and same-category peer-fund comparison for any ETF — powered by your own free Alpha Vantage key.</p>
+      <nav class="pagenav">
+        <a href="index.html">Home</a>
+        <a href="overview.html">Market Overview</a>
+        <a href="analyzer.html">Stock Analyzer</a>
+        <a href="etf.html" class="active">ETF Analyzer</a>
+      </nav>
+    </div>
+    <form id="searchForm" autocomplete="off">
+      <input type="text" id="tickerInput" placeholder="QQQ" maxlength="8" value="QQQ">
+      <details class="keys" id="keybox">
+        <summary id="keySummary">API keys</summary>
+        <div class="keypanel">
+          <p>Free key at <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener">alphavantage.co</a> (required, ~25 req/day, this page uses 2 per analysis).</p>
+          <label for="avKey">Alpha Vantage key</label>
+          <input type="password" id="avKey" placeholder="required">
+          <p>Shared with the Stock Analyzer page — save it once, use it everywhere on this site.</p>
+          <button type="button" class="ghost" id="saveKeys">Save</button>
+        </div>
+      </details>
+      <button type="submit" id="goBtn">Analyze</button>
+    </form>
+  </div>
+
+  <div id="banner" class="banner example">Enter your Alpha Vantage key above, then press Analyze.</div>
+
+  <div class="overview" id="overview" style="display:none;"></div>
+
+  <div class="grid">
+    <div class="col" style="display:flex;flex-direction:column;gap:18px;">
+
+      <div class="card">
+        <div class="card-head"><h2>Expense ratio</h2><span class="eyebrow">Annual fund fee</span></div>
+        <div class="verdict-row">
+          <span class="px" id="erValue">—</span>
+          <span class="tier-badge" id="erTierBadge">—</span>
+        </div>
+        <div class="verdict-note" id="erNote"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Fund facts</h2><span class="eyebrow">Overview</span></div>
+        <table class="metrics" id="factsTable"></table>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Sector exposure</h2><span class="eyebrow">Share of fund by sector</span></div>
+        <div id="sectorBars"></div>
+      </div>
+
+    </div>
+
+    <div class="col" style="display:flex;flex-direction:column;gap:18px;">
+
+      <div class="card">
+        <div class="card-head"><h2>Top holdings</h2><span class="eyebrow" id="holdingsCount">—</span></div>
+        <table class="rank" id="holdingsTable"></table>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Peer ETFs &amp; expense-ratio comparison</h2><span class="eyebrow" id="peerCategory">—</span></div>
+        <div id="peerSection"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>
+    Educational tool, not investment advice. Fund data comes from Alpha Vantage's free tier (rate-limited, ~25 calls/day, ~1/sec; each analysis uses 2 calls made one at a time). Peer funds and their expense ratios are a fixed, maintained reference list of well-known funds per sector — not a live fund screener — so treat comparisons as a rough guide, not an exhaustive ranking. Looking for a specific company instead? See the <a href="analyzer.html">Stock Analyzer</a>.
+  </footer>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(function(){
+"use strict";
+
+const els = {
+  tickerInput: document.getElementById('tickerInput'),
+  avKey: document.getElementById('avKey'),
+  saveKeys: document.getElementById('saveKeys'),
+  keybox: document.getElementById('keybox'),
+  keySummary: document.getElementById('keySummary'),
+  form: document.getElementById('searchForm'),
+  goBtn: document.getElementById('goBtn'),
+  banner: document.getElementById('banner'),
+  overview: document.getElementById('overview'),
+  erValue: document.getElementById('erValue'),
+  erTierBadge: document.getElementById('erTierBadge'),
+  erNote: document.getElementById('erNote'),
+  factsTable: document.getElementById('factsTable'),
+  sectorBars: document.getElementById('sectorBars'),
+  holdingsCount: document.getElementById('holdingsCount'),
+  holdingsTable: document.getElementById('holdingsTable'),
+  peerCategory: document.getElementById('peerCategory'),
+  peerSection: document.getElementById('peerSection'),
+};
+
+(function initKeys(){
+  const av = loadK('ti_av_key');
+  if(av) els.avKey.value = av;
+  els.keySummary.textContent = av ? 'API keys saved ✓' : 'API keys';
+})();
+els.saveKeys.addEventListener('click', function(){
+  saveK('ti_av_key', els.avKey.value.trim());
+  els.keySummary.textContent = els.avKey.value.trim() ? 'API keys saved ✓' : 'API keys';
+  els.keybox.removeAttribute('open');
+});
+
+function setBanner(kind,msg){ els.banner.className = 'banner'+(kind?' '+kind:''); els.banner.textContent = msg; }
+function metricRow(k,v){ return '<tr><td class="k">'+k+'</td><td class="v">'+v+'</td></tr>'; }
+function titleCase(s){ return (s||'').toLowerCase().replace(/\b\w/g, function(c){ return c.toUpperCase(); }); }
+function median(arr){
+  const s = arr.slice().sort(function(a,b){ return a-b; });
+  const n = s.length;
+  if(!n) return null;
+  return n%2===1 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2;
+}
+
+/* ---------------- sector peer-fund reference (static, approximate expense ratios in %) ---------------- */
+const ETF_PEER_GROUPS = {
+  'Technology': {label:'Technology / Information Technology', peers:[
+    {t:'XLK', name:'Technology Select Sector SPDR Fund', er:0.09},
+    {t:'VGT', name:'Vanguard Information Technology ETF', er:0.09},
+    {t:'FTEC', name:'Fidelity MSCI Information Technology ETF', er:0.08},
+    {t:'IYW', name:'iShares U.S. Technology ETF', er:0.39},
+    {t:'SMH', name:'VanEck Semiconductor ETF', er:0.35},
+  ]},
+  'Health Care': {label:'Health Care', peers:[
+    {t:'XLV', name:'Health Care Select Sector SPDR Fund', er:0.09},
+    {t:'VHT', name:'Vanguard Health Care ETF', er:0.09},
+    {t:'FHLC', name:'Fidelity MSCI Health Care ETF', er:0.08},
+    {t:'IYH', name:'iShares U.S. Healthcare ETF', er:0.39},
+    {t:'IBB', name:'iShares Biotechnology ETF', er:0.44},
+  ]},
+  'Financials': {label:'Financials', peers:[
+    {t:'XLF', name:'Financial Select Sector SPDR Fund', er:0.09},
+    {t:'VFH', name:'Vanguard Financials ETF', er:0.09},
+    {t:'FNCL', name:'Fidelity MSCI Financials ETF', er:0.08},
+    {t:'IYF', name:'iShares U.S. Financials ETF', er:0.39},
+    {t:'KBE', name:'SPDR S&P Bank ETF', er:0.35},
+  ]},
+  'Energy': {label:'Energy', peers:[
+    {t:'XLE', name:'Energy Select Sector SPDR Fund', er:0.09},
+    {t:'VDE', name:'Vanguard Energy ETF', er:0.09},
+    {t:'FENY', name:'Fidelity MSCI Energy ETF', er:0.08},
+    {t:'IYE', name:'iShares U.S. Energy ETF', er:0.39},
+  ]},
+  'Consumer Discretionary': {label:'Consumer Discretionary', peers:[
+    {t:'XLY', name:'Consumer Discretionary Select Sector SPDR Fund', er:0.09},
+    {t:'VCR', name:'Vanguard Consumer Discretionary ETF', er:0.09},
+    {t:'FDIS', name:'Fidelity MSCI Consumer Discretionary ETF', er:0.08},
+    {t:'IYC', name:'iShares U.S. Consumer Discretionary ETF', er:0.39},
+  ]},
+  'Consumer Staples': {label:'Consumer Staples', peers:[
+    {t:'XLP', name:'Consumer Staples Select Sector SPDR Fund', er:0.09},
+    {t:'VDC', name:'Vanguard Consumer Staples ETF', er:0.09},
+    {t:'FSTA', name:'Fidelity MSCI Consumer Staples ETF', er:0.08},
+    {t:'IYK', name:'iShares U.S. Consumer Staples ETF', er:0.39},
+  ]},
+  'Industrials': {label:'Industrials', peers:[
+    {t:'XLI', name:'Industrial Select Sector SPDR Fund', er:0.09},
+    {t:'VIS', name:'Vanguard Industrials ETF', er:0.09},
+    {t:'FIDU', name:'Fidelity MSCI Industrials ETF', er:0.08},
+    {t:'IYJ', name:'iShares U.S. Industrials ETF', er:0.39},
+  ]},
+  'Materials': {label:'Materials', peers:[
+    {t:'XLB', name:'Materials Select Sector SPDR Fund', er:0.09},
+    {t:'VAW', name:'Vanguard Materials ETF', er:0.09},
+    {t:'FMAT', name:'Fidelity MSCI Materials ETF', er:0.08},
+    {t:'IYM', name:'iShares U.S. Basic Materials ETF', er:0.39},
+  ]},
+  'Utilities': {label:'Utilities', peers:[
+    {t:'XLU', name:'Utilities Select Sector SPDR Fund', er:0.09},
+    {t:'VPU', name:'Vanguard Utilities ETF', er:0.09},
+    {t:'FUTY', name:'Fidelity MSCI Utilities ETF', er:0.08},
+    {t:'IDU', name:'iShares U.S. Utilities ETF', er:0.39},
+  ]},
+  'Real Estate': {label:'Real Estate', peers:[
+    {t:'XLRE', name:'Real Estate Select Sector SPDR Fund', er:0.09},
+    {t:'VNQ', name:'Vanguard Real Estate ETF', er:0.13},
+    {t:'FREL', name:'Fidelity MSCI Real Estate ETF', er:0.08},
+    {t:'IYR', name:'iShares U.S. Real Estate ETF', er:0.39},
+  ]},
+  'Communication Services': {label:'Communication Services', peers:[
+    {t:'XLC', name:'Communication Services Select Sector SPDR Fund', er:0.09},
+    {t:'VOX', name:'Vanguard Communication Services ETF', er:0.09},
+    {t:'FCOM', name:'Fidelity MSCI Communication Services ETF', er:0.08},
+  ]},
+  'Broad Market': {label:'Broad market / diversified', peers:[
+    {t:'VOO', name:'Vanguard S&P 500 ETF', er:0.03},
+    {t:'IVV', name:'iShares Core S&P 500 ETF', er:0.03},
+    {t:'SPY', name:'SPDR S&P 500 ETF Trust', er:0.0945},
+    {t:'VTI', name:'Vanguard Total Stock Market ETF', er:0.03},
+    {t:'SCHB', name:'Schwab U.S. Broad Market ETF', er:0.03},
+  ]},
+};
+const ETF_NAME_LOOKUP = {};
+Object.keys(ETF_PEER_GROUPS).forEach(function(k){
+  ETF_PEER_GROUPS[k].peers.forEach(function(p){ ETF_NAME_LOOKUP[p.t] = p.name; });
+});
+
+function normalizeSector(raw){
+  const s = (raw||'').toUpperCase();
+  if(s.includes('TECH')) return 'Technology';
+  if(s.includes('HEALTH')) return 'Health Care';
+  if(s.includes('FINANC')) return 'Financials';
+  if(s.includes('ENERGY')) return 'Energy';
+  if(s.includes('CONSUMER') && (s.includes('CYCLICAL')||s.includes('DISCRETIONARY'))) return 'Consumer Discretionary';
+  if(s.includes('CONSUMER') && (s.includes('DEFENSIVE')||s.includes('STAPLES'))) return 'Consumer Staples';
+  if(s.includes('INDUSTRIAL')) return 'Industrials';
+  if(s.includes('MATERIAL')||s.includes('BASIC MATERIALS')) return 'Materials';
+  if(s.includes('UTILIT')) return 'Utilities';
+  if(s.includes('REAL ESTATE')) return 'Real Estate';
+  if(s.includes('COMMUNICATION')||s.includes('TELECOM')) return 'Communication Services';
+  return null;
+}
+
+/* ---------------- expense-ratio tiering ----------------
+   Rough, widely-cited bands: broad-market index funds usually run well under 0.10%;
+   most sector, international, and thematic index funds run 0.10%-0.50%; actively managed,
+   leveraged/inverse, and niche thematic funds are typically above 0.50%. */
+function erTier(erPct){
+  if(erPct===null) return {tier:'—', cls:'neutral'};
+  if(erPct < 0.10) return {tier:'Low', cls:'bullish'};
+  if(erPct <= 0.50) return {tier:'Normal', cls:'neutral'};
+  return {tier:'High', cls:'bearish'};
+}
+function costVerdict(erPct, peerMedian){
+  if(erPct===null||peerMedian===null||peerMedian===0) return {cls:'neutral', label:'n/a'};
+  const ratio = erPct/peerMedian;
+  if(ratio < 0.85) return {cls:'bullish', label:'Cheaper than peers'};
+  if(ratio > 1.15) return {cls:'bearish', label:'Pricier than peers'};
+  return {cls:'neutral', label:'In line with peers'};
+}
+
+function renderOverview(ticker, quote, primaryLabel){
+  els.overview.style.display = 'flex';
+  const q = quote['Global Quote'] || {};
+  const price = num(q['05. price']);
+  const change = num(q['09. change']) || 0;
+  const changePct = num((q['10. change percent']||'0').replace('%','')) || 0;
+  const cls = change>=0 ? 'up' : 'down';
+  const arrow = change>=0 ? '▲' : '▼';
+  const displayName = ETF_NAME_LOOKUP[ticker] || ticker;
+  const priceHtml = price!==null ?
+    '<div class="ov-price"><span class="px">$'+price.toFixed(2)+'</span><span class="chg '+cls+'">'+arrow+' '+Math.abs(change).toFixed(2)+' ('+Math.abs(changePct).toFixed(2)+'%)</span></div>' : '';
+  els.overview.innerHTML =
+    '<div class="ov-id"><div class="tick">'+ticker+' · ETF</div><h2>'+displayName+'</h2><div class="sub">'+primaryLabel+'</div></div>'+
+    priceHtml;
+}
+
+function renderExpenseRatio(erPct){
+  const t = erTier(erPct);
+  els.erValue.textContent = erPct!==null ? erPct.toFixed(2)+'%' : '—';
+  els.erTierBadge.textContent = t.tier;
+  els.erTierBadge.style.background = 'var(--'+t.cls+'-soft)';
+  els.erTierBadge.style.color = 'var(--'+t.cls+')';
+  let note;
+  if(erPct===null){ note = 'No expense ratio was reported for this fund.'; }
+  else if(t.tier==='Low'){ note = 'Below 0.10% — in line with the cheapest broad-market index funds.'; }
+  else if(t.tier==='Normal'){ note = 'Between 0.10% and 0.50% — typical for sector, international, or thematic index funds.'; }
+  else { note = 'Above 0.50% — typical of actively managed, leveraged/inverse, or niche thematic funds.'; }
+  els.erNote.textContent = note;
+}
+
+function renderFacts(profile, primaryLabel){
+  const rows = [];
+  rows.push(metricRow('Net assets', money(num(profile.net_assets))));
+  rows.push(metricRow('Dividend yield', pct(num(profile.dividend_yield))));
+  rows.push(metricRow('Inception date', profile.inception_date || '—'));
+  rows.push(metricRow('Portfolio turnover', pct(num(profile.portfolio_turnover))));
+  rows.push(metricRow('Leveraged / inverse fund', (profile.leveraged||'').toUpperCase()==='YES' ? 'Yes' : 'No'));
+  rows.push(metricRow('Primary sector exposure', primaryLabel));
+  els.factsTable.innerHTML = rows.join('');
+}
+
+function renderSectorBars(sectors){
+  if(!sectors.length){
+    els.sectorBars.innerHTML = '<p class="note">No sector breakdown was reported for this fund (common for bond, currency, or commodity ETFs).</p>';
+    return;
+  }
+  const top = sectors.slice(0,8);
+  els.sectorBars.innerHTML = top.map(function(s){
+    const p = s.weight*100;
+    return '<div class="sector-bar-row"><span class="sector-bar-name">'+titleCase(s.name)+'</span>'+
+      '<span class="sector-bar-track"><span class="sector-bar-fill" style="width:'+Math.min(100,p).toFixed(1)+'%;"></span></span>'+
+      '<span class="sector-bar-pct">'+p.toFixed(1)+'%</span></div>';
+  }).join('');
+}
+
+function renderHoldings(holdings){
+  els.holdingsCount.textContent = holdings.length + ' positions';
+  if(!holdings.length){
+    els.holdingsTable.innerHTML = '<tr><td class="note" colspan="2">No holdings data reported for this fund.</td></tr>';
+    return;
+  }
+  const top = holdings.slice(0,10);
+  els.holdingsTable.innerHTML = '<tr><th>Holding</th><th>Weight</th></tr>' +
+    top.map(function(h){
+      const w = num(h.weight);
+      return '<tr><td>'+(h.description||h.symbol||'—')+' <span class="meta">'+(h.symbol||'')+'</span></td><td class="num">'+(w!==null?(w*100).toFixed(2)+'%':'—')+'</td></tr>';
+    }).join('');
+}
+
+function renderPeers(ticker, erPct, group){
+  els.peerCategory.textContent = group.label;
+  const peerMedian = median(group.peers.map(function(p){ return p.er; }));
+  const verdict = costVerdict(erPct, peerMedian);
+
+  const rows = group.peers.filter(function(p){ return p.t!==ticker; }).map(function(p){
+    return {t:p.t, name:p.name, er:p.er, self:false};
+  });
+  rows.push({t:ticker, name:(ETF_NAME_LOOKUP[ticker]||ticker), er:erPct, self:true});
+  rows.sort(function(a,b){
+    const av = a.er===null ? Infinity : a.er, bv = b.er===null ? Infinity : b.er;
+    return av-bv;
+  });
+
+  const tableHtml = '<table class="rank"><tr><th>ETF</th><th>Fund</th><th>Expense ratio</th></tr>' +
+    rows.map(function(r){
+      return '<tr class="'+(r.self?'self-row':'')+'"><td class="num">'+r.t+(r.self?' <span class="tag neutral">this fund</span>':'')+'</td><td>'+r.name+'</td><td class="num">'+(r.er!==null?r.er.toFixed(2)+'%':'—')+'</td></tr>';
+    }).join('') +
+  '</table>';
+
+  els.peerSection.innerHTML =
+    '<div class="verdict-row"><span class="tier-badge" style="background:var(--'+verdict.cls+'-soft);color:var(--'+verdict.cls+');">'+verdict.label+'</span>'+
+    '<span class="verdict-note">Peer median expense ratio in '+group.label+': '+(peerMedian!==null?peerMedian.toFixed(2)+'%':'—')+'.</span></div>'+
+    tableHtml+
+    '<p class="note">Peer funds and their expense ratios are a fixed, maintained reference list of well-known funds per category — not a live fund screener — so treat this as a rough guide, not an exhaustive comparison.</p>';
+}
+
+async function runEtfAnalysis(ticker){
+  const avKey = els.avKey.value.trim();
+  if(!avKey){ setBanner('error', 'Add your Alpha Vantage API key first (see API keys panel).'); return; }
+
+  els.goBtn.disabled = true;
+  try{
+    setBanner('', 'Fetching ETF profile for '+ticker+'… (1/2)');
+    const profile = await avFetch({function:'ETF_PROFILE', symbol:ticker}, avKey);
+    if(!profile || profile.net_expense_ratio===undefined) throw new Error('No ETF profile data returned for "'+ticker+'" — check that this is a valid ETF ticker.');
+
+    await delay(1100);
+    setBanner('', 'Fetching quote for '+ticker+'… (2/2)');
+    const quote = await avFetch({function:'GLOBAL_QUOTE', symbol:ticker}, avKey);
+
+    const erPct = num(profile.net_expense_ratio)!==null ? num(profile.net_expense_ratio)*100 : null;
+    const sectorsRaw = (profile.sectors||[]).map(function(s){ return {name:s.sector, weight:num(s.weight)||0}; })
+      .filter(function(s){ return s.weight>0; }).sort(function(a,b){ return b.weight-a.weight; });
+
+    let primaryKey = null;
+    for(const s of sectorsRaw){ const k = normalizeSector(s.name); if(k){ primaryKey = k; break; } }
+    if(!primaryKey) primaryKey = 'Broad Market';
+    const group = ETF_PEER_GROUPS[primaryKey];
+
+    renderOverview(ticker, quote, group.label);
+    renderExpenseRatio(erPct);
+    renderFacts(profile, group.label);
+    renderSectorBars(sectorsRaw);
+    renderHoldings(profile.holdings||[]);
+    renderPeers(ticker, erPct, group);
+
+    setBanner('', 'Loaded live data for '+ticker+'.');
+  }catch(err){
+    setBanner('error', err.message);
+  }finally{
+    els.goBtn.disabled = false;
+  }
+}
+
+els.form.addEventListener('submit', function(e){
+  e.preventDefault();
+  const t = els.tickerInput.value.trim().toUpperCase();
+  if(t) runEtfAnalysis(t);
+});
+
+})();
+</script>
+</body>
+</html>
